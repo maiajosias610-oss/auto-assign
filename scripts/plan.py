@@ -88,19 +88,45 @@ def rename_rows(rows, mapping, kind):
     return out
 
 
+# 引擎（engine/planner.py）读规则表多余列用的键：sticky 判据「同类型安排同一个人」就从这里取
+REST_KEY = "_extra"
+
+
 def write_csv(path, rows):
+    """写 CSV。
+
+    各行列数可能不齐（手工表常见），所以 fieldnames 取所有行的键并集，
+    并用 extrasaction=ignore，避免 DictWriter 对多余列抛 ValueError。
+    """
     if not rows:
         open(path, "w", encoding="utf-8-sig").write("")
         return
+    fields, seen = [], set()
+    for r in rows:
+        for k in r:
+            if k not in seen:
+                seen.add(k)
+                fields.append(k)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore", restval="")
         w.writeheader()
         w.writerows(rows)
 
 
 def read_csv(path):
+    """读 CSV。比表头多出来的单元格收进 REST_KEY，不再产生 None 键。
+
+    DictReader 默认把多余列塞到 None 键下：既会让下游写出 None 列，
+    也会在「首行不多余、后续行多余」时让 DictWriter 直接崩。
+    同时把多余列拼成字符串，保证 sticky 的 `"同一个人" in note` 判定可用。
+    """
     with open(path, encoding="utf-8-sig", newline="") as f:
-        return list(csv.DictReader(f))
+        rows = list(csv.DictReader(f, restkey=REST_KEY))
+    for r in rows:
+        extra = r.get(REST_KEY)
+        if isinstance(extra, list):
+            r[REST_KEY] = " ".join(str(x) for x in extra if x is not None)
+    return rows
 
 
 # ---------------- 跑引擎 ----------------
@@ -115,6 +141,8 @@ def run_engine(tmp, args, max_load_days, outdir):
            "--qty-shape", args.qty_shape]
     if args.today:
         cmd += ["--today", args.today]
+    if getattr(args, "project_name", ""):
+        cmd += ["--doc-name", args.project_name]
     if args.holidays and os.path.exists(args.holidays):
         cmd += ["--holidays", args.holidays]
     if max_load_days:
@@ -155,7 +183,8 @@ def main():
     ap.add_argument("--outdir", default=os.path.join(ROOT, "out"))
     ap.add_argument("--adapter", choices=["feishu", "csv"], default="csv")
     ap.add_argument("--project-type", default="默认分类")
-    ap.add_argument("--project-name", default="")
+    ap.add_argument("--project-name", default="",
+                    help="需求文档标题，传给引擎 --doc-name（plan.md 里显示为「需求文档」）")
     ap.add_argument("--threshold", type=float, default=None, help="跳过自动求解，直接指定负载上限（天）")
     ap.add_argument("--apply", action="store_true", help="确认后写回飞书")
     ap.add_argument("--active-value", default=None, help="覆盖成员表「状态」的可派取值")
@@ -229,7 +258,7 @@ def main():
     elif os.path.exists(os.path.join(cfg_dir, "tasks.csv")):
         shutil.copy(os.path.join(cfg_dir, "tasks.csv"), os.path.join(tmp, "occupancy.csv"))
 
-    # 3) 求解阈值：二分找满足 deadline 的最大阈值
+    # 3) 求解阈值：全区间扫描，挑收尾最早的解
     deadline, chosen = "", None
     if args.threshold:
         chosen = args.threshold
@@ -239,26 +268,23 @@ def main():
         ld = datetime.date.fromisoformat(str(sched["launch_date"]))
         n = int(sched.get("finish_before_launch_days", 0))
         deadline = (ld - datetime.timedelta(days=n)).isoformat()
-        lo, hi = int(sched.get("max_load_days_min", 1)), int(sched.get("max_load_days_max", 30))
-        # 单调性：阈值越小 -> 摊得越开 -> 收尾越早。故二分找「满足 deadline 的最小阈值」= 最均衡解
-        run_engine(tmp, args, hi, os.path.join(tmp, "try_hi"))
-        if plan_end(os.path.join(tmp, "try_hi")) > deadline:
-            print(f"!! 最放宽（阈值 {hi} 天）也压不进 {deadline}，需要加人或砍需求。")
-            print("   以下按最放宽阈值出方案，请人工决策。")
-            best = hi
-        else:
-            best = hi
-            while lo <= hi:
-                mid = (lo + hi) // 2
-                run_engine(tmp, args, mid, os.path.join(tmp, f"try_{mid}"))
-                end = plan_end(os.path.join(tmp, f"try_{mid}"))
-                ok = end <= deadline
-                print(f"  阈值 {mid} 天 -> 收尾 {end} {'OK' if ok else '超期'}")
-                if ok:
-                    best, hi = mid, mid - 1
-                else:
-                    lo = mid + 1
-        chosen = best
+        lo = int(sched.get("max_load_days_min", 1))
+        hi = int(sched.get("max_load_days_max", 30))
+        # 收尾日期对阈值**不保证单调**：不同阈值下任务会重排到不同人身上，可能出现倒挂。
+        # 所以不能二分，必须全区间扫描后挑收尾最早的解；收尾相同时保留更小的阈值（更均衡）。
+        best, best_end = None, ""
+        for cand in range(lo, hi + 1):
+            d = os.path.join(tmp, f"try_{cand}")
+            run_engine(tmp, args, cand, d)
+            end = plan_end(d)
+            if end and (not best_end or end < best_end):
+                best, best_end = cand, end
+            tag = "" if not end else ("OK" if end <= deadline else "超期")
+            print(f"  阈值 {cand} 天 -> 收尾 {end or '无任务'} {tag}")
+        chosen = best if best is not None else hi
+        if best_end and best_end > deadline:
+            print(f"!! 全区间扫描（{lo}~{hi} 天）都压不进 {deadline}；"
+                  f"已给出收尾最早的一版（阈值 {chosen} 天 -> {best_end}），需要加人或砍需求。")
         run_engine(tmp, args, chosen, outdir)
     else:
         run_engine(tmp, args, None, outdir)
