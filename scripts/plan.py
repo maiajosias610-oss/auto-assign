@@ -192,7 +192,18 @@ def main():
     ap.add_argument("--ai-naming", choices=["off", "model", "model_task"], default=None,
                     help="AI 展示名：off=成员表名 / model=模型名 / model_task=模型·需求名")
     ap.add_argument("--currency", default=None, help="成本单位符号，默认「元」")
+    ap.add_argument("--allow-example-fallback", action="store_true",
+                    help="缺必需输入时用示例数据顶替（仅演示用，结果是假的；默认拒绝）")
+    ap.add_argument("--skip-preflight", action="store_true",
+                    help="跳过开工前的输入完整性校验（不推荐）")
     args = ap.parse_args()
+    cfg_dir = args.config_dir
+    if not args.skip_preflight and not args.allow_example_fallback:
+        rc = subprocess.call(
+            [PY, os.path.join(HERE, "preflight.py"), "--config-dir", cfg_dir,
+             "--outdir", args.outdir])
+        if rc != 0:
+            sys.exit(rc)
 
     cfg_dir = args.config_dir
     sched = load_yaml(os.path.join(cfg_dir, "schedule.yaml")) if os.path.exists(
@@ -219,17 +230,32 @@ def main():
     tmp = tempfile.mkdtemp(prefix="dispatch_")
 
     # 1) 输入归一
-    req = rename_rows(read_csv(os.path.join(cfg_dir, "requirements.csv"))
-                      if os.path.exists(os.path.join(cfg_dir, "requirements.csv"))
-                      else read_csv(os.path.join(cfg_dir, "requirements.example.csv")),
+    def need_input(filename, human):
+        """必需输入。缺了就停，绝不静默回落到示例数据。
+
+        历史坑：原先缺文件会直接读 *.example.*，跑出一个看起来正常但完全虚假的排期，
+        而使用者以为那是真实结果。现在默认拒绝，除非显式 --allow-example-fallback。
+        """
+        p = os.path.join(cfg_dir, filename)
+        if os.path.exists(p):
+            return read_csv(p)
+        ex = os.path.join(cfg_dir, filename.replace(".csv", ".example.csv"))
+        if getattr(args, "allow_example_fallback", False) and os.path.exists(ex):
+            print(f"\n!! 警告：{filename} 缺失，已按 --allow-example-fallback 回落到示例数据。")
+            print("!! 这一版结果是假的，只能用来看流程，不能用来派单。\n")
+            return read_csv(ex)
+        print(f"\n!! 缺少必需输入：{filename}（{human}）")
+        print(f"   先跑：python scripts/preflight.py --config-dir {cfg_dir}")
+        print("   它会列出缺什么、以及该怎么向用户索取。")
+        print("   （不要从工作区旧产物里推测，也不要拿示例模板顶替。）")
+        print("   确实只想拿示例数据看流程，加 --allow-example-fallback。\n")
+        sys.exit(2)
+
+    req = rename_rows(need_input("requirements.csv", "需求清单"),
                       fmap["requirements"], "requirements")
-    mem = rename_rows(read_csv(os.path.join(cfg_dir, "members.csv"))
-                      if os.path.exists(os.path.join(cfg_dir, "members.csv"))
-                      else read_csv(os.path.join(cfg_dir, "members.example.csv")),
+    mem = rename_rows(need_input("members.csv", "成员表"),
                       fmap["members"], "members")
-    wh = rename_rows(read_csv(os.path.join(cfg_dir, "workhours.csv"))
-                     if os.path.exists(os.path.join(cfg_dir, "workhours.csv"))
-                     else read_csv(os.path.join(cfg_dir, "workhours.example.csv")),
+    wh = rename_rows(need_input("workhours.csv", "派单规则 / 工时表"),
                      fmap["workhours"], "workhours")
     write_csv(os.path.join(tmp, "requirements.csv"), req)
     write_csv(os.path.join(tmp, "members.csv"), mem)

@@ -17,14 +17,43 @@ agent_created: true
 - 需要区分「人受工作日与节假日约束」「AI 可 7×24」并混排
 - 需要把结果写进飞书多维表格（或导出 CSV）
 
+## 第 0 步（不能跳）：先向用户要输入
+
+**用户说"帮我排期"时，他通常只给了任务清单，没给派单规则和成员。这时不要开工。**
+
+不要从以下来源替他补齐：
+- 工作区里其他项目的旧产物（`.plan/`、`*-实时.csv`、历史排期目录）
+- 本 skill 自带的 `*.example.*` 模板
+- 你自己的常识推断
+
+先跑校验，让它告诉你缺什么、该怎么问：
+
+```bash
+python scripts/preflight.py --config-dir config --scaffold
+```
+
+缺必需输入时它退出码 2，并打印**追问话术**（要哪几列、每列什么意思、为什么必须）。照着问用户，别自己编。
+
+四张表，缺一不可：
+
+| 输入 | 是什么 | 为什么不能猜 |
+|---|---|---|
+| `workhours.csv` | 派单规则：类型 × 规模 → 工时 + 候选组 + 优先级 | 猜了工作量，整张表的日期全错，且不报错 |
+| `members.csv` | 人 / agent 名单 + 所属组 + 在职状态 | 猜了会排给离职的人 |
+| `requirements.csv` | 要排的任务清单 | 这是用户唯一通常会给的 |
+| `schedule.yaml` | 起始日 / deadline / 日工时 / 负载阈值区间 | **deadline 尤其不能猜**，猜错整表偏移 |
+
+`preflight.py` 的识别能力：缺文件、空文件、**内容等于示例模板（拷了没填）**、缺关键列、关键列空值率 > 30%。最后一种最容易伪装成"数据稀疏"，要盯。
+
 ## 三步跑通
 
 ```bash
-cp config/*.example.* config/   # 去掉 .example 后缀，改成自己的
+python scripts/preflight.py --config-dir config            # 0. 校验输入（必需）
+python scripts/init_template.py --config-dir config --emit-fields
 
 python scripts/init_template.py --config-dir config --emit-fields
-python scripts/plan.py --config-dir config --outdir out                      # 预览
-python scripts/plan.py --config-dir config --outdir out --adapter feishu --apply
+python scripts/plan.py --config-dir config --outdir out     # 1. 预览（自动先跑 preflight）
+python scripts/plan.py --config-dir config --outdir out --adapter feishu --apply   # 2. 写回
 ```
 
 ## 必须遵守的规矩
@@ -32,6 +61,8 @@ python scripts/plan.py --config-dir config --outdir out --adapter feishu --apply
 1. **任何写回前先出预览，拿到明确确认。** 写操作只在 `--apply` 下发生。
 2. 数字对不上要主动披露，不许含糊。
 3. @人、外发等外向动作，每次单独确认。
+4. **输入必须是用户给的，不是你找的。** 缺派单规则 / 成员表就停下来问，别从工作区旧产物里捡。
+   哪怕最后数字对得上，来源错了也是错的——而且不报错，查不出来。
 
 ## 概念映射（换个部门就换这套词）
 
@@ -161,6 +192,9 @@ finish_before_launch_days: 3   # 09-12 前全部收尾
 - 大表必须服务端 filter，`total` 不可信、全量拉取超时
 - 数量解析：括号内尺寸 `座驾（600*300）` 不算数量，裸 `*N` 才是
 - 排期是**快照**：方案隔周即过期，重跑比手改日期靠谱
+- **曾用过静默回落**：老版本缺 `members.csv`/`workhours.csv`/`requirements.csv` 时会直接读
+  `*.example.*` 示例数据，跑出看似正常的假方案。现已改为默认拒绝（退出码 2 + 追问话术），
+  只在 `--allow-example-fallback` 下才回落。遇到老仓库的旧产出，来源存疑就重跑
 
 详见 `references/feishu-api.md`。
 
@@ -172,7 +206,8 @@ finish_before_launch_days: 3   # 09-12 前全部收尾
 | `engine/fetch_holidays.py` | 节假日抓取 |
 | `adapters/feishu_adapter.py` | 飞书读写（凭证走环境变量） |
 | `adapters/csv_adapter.py` | CSV 后端（无飞书也能跑） |
-| `scripts/plan.py` | 编排入口 |
+| `scripts/plan.py` | 编排入口（跑之前自动调 preflight） |
+| `scripts/preflight.py` | **开工前输入校验**：缺什么、该怎么问用户要 |
 | `scripts/init_template.py` | 需求模板 + 建表字段清单生成器 |
 | `references/feishu-api.md` | 飞书接入细节与错误码 |
 
@@ -190,3 +225,4 @@ FEISHU_TABLE_TASK / FEISHU_TABLE_MEMBER / FEISHU_TABLE_PROJECT
 `--threshold N` 跳过自动求解 · `--adapter feishu|csv` · `--apply` 写回
 `--active-value` 覆盖「可派状态」取值 · `--ai-daily-hours` 覆盖 AI 日容量
 `--ai-naming off|model|model_task` 覆盖 AI 展示名 · `--currency` 成本单位符号
+`--skip-preflight` 跳过输入校验（不推荐） · `--allow-example-fallback` 用示例数据顶替（结果假的，仅演示）
