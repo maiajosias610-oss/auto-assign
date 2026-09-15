@@ -6,6 +6,32 @@
 **不限于设计团队。** 执行者可以是人也可以是 AI agent：人在工作日与节假日约束下排，
 AI 按 7×24 排、日容量单独配，两者混在同一张成员表里、用同一套规则表竞争同一批任务。
 
+## 安装
+
+这是一个 **Agent Skill 仓库**（入口是 `SKILL.md`）。克隆到你的 Agent 技能目录即可被调用：
+
+```bash
+# Claude Code
+git clone https://github.com/maiajosias610-oss/auto-assign.git ~/.claude/skills/auto-assign
+
+# Codex
+git clone https://github.com/maiajosias610-oss/auto-assign.git ~/.codex/skills/auto-assign
+
+# WorkBuddy
+git clone https://github.com/maiajosias610-oss/auto-assign.git ~/.workbuddy/skills/auto-assign
+```
+
+不放进 Agent、当命令行工具用也行：
+
+```bash
+git clone https://github.com/maiajosias610-oss/auto-assign.git && cd auto-assign
+cp config/*.example.* config/
+python scripts/plan.py --config-dir config --outdir out
+```
+
+**环境要求**：Python 3.9+。**核心链路零第三方依赖**（YAML 用自带的极简解析器，无需 PyYAML）。
+只有把 Excel 转成 CSV 时才需要 `pip install openpyxl`（`engine/xlsx_to_csv.py`）。
+
 ## 为什么还要一个
 
 公开的飞书 skill 只做 CRUD/发消息；公开的任务调度 skill 面向 **AI agent 集群**调度。
@@ -30,7 +56,7 @@ export FEISHU_TABLE_TASK=tblxxx
 export FEISHU_TABLE_MEMBER=tblxxx
 ```
 
-## 两条核心设计
+## 三条核心设计
 
 **1. 不设固定负载阈值，只说业务目标**
 
