@@ -1,0 +1,14 @@
+# 真实配置不提交（含业务名、人名、凭证）
+config/members.csv
+config/workhours.csv
+config/requirements.csv
+config/aliases.csv
+config/schedule.yaml
+config/field_map.yaml
+config/holidays.json
+config/tasks.csv
+
+out/
+__pycache__/
+*.pyc
+.env

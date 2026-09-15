@@ -1,0 +1,32 @@
+# 排期参数 —— 复制为 schedule.yaml 后改成你自己的
+# 所有日期格式 YYYY-MM-DD
+
+# ---------- 时间基准 ----------
+today:                       # 排期起点（留空 = 系统当天）
+day_hours: 8.0               # 人类执行者每天有效工时
+ai_daily_hours: 24           # AI 执行者每天容量（小时）；留空 = 同 day_hours
+                             # AI 默认 7×24 排期，不受周末/节假日影响
+work_on_weekends: false      # 周末是否排期（只影响 human；节假日表仍生效）
+holidays: holidays.json      # 节假日 JSON，见 fetch_holidays.py
+
+# ---------- 人机混排 ----------
+ai_naming: model_task        # AI 展示名：off=成员表名 / model=模型名 / model_task=模型·需求名
+currency: 元                 # 成本单位符号（只是显示用，不参与换算）
+
+# ---------- 交付约束（替代固定负载阈值） ----------
+launch_date: 2026-12-15      # 上线日（示例为将来日期；实际用时改成你的上线日）
+finish_before_launch_days: 3 # 要求「上线日 - N」之前全部收尾
+# 引擎做法：正排 + 二分搜索 max_load_days。
+# 阈值越小 -> 摊得越开 -> 收尾越早（单调），所以取「满足 deadline 的最小阈值」= 最均衡解。
+# 若最放宽阈值仍压不进 deadline，直接报警，不硬排。
+
+max_load_days_max: 30        # 二分上界
+max_load_days_min: 4         # 二分下界（= 均衡力度的地板）
+# 下界别设太小：1~2 天会把同一系列的任务全打散给不同人，丢掉归属连续性。
+# 4 天（约半周）是实测比较稳的地板；想更平均可以往下调。
+
+# ---------- 分配规则 ----------
+qty_shape: parent            # parent | flat | single  数量 N 的拆分形状
+write_priority: false        # 是否把规则表「优先级」写进任务表
+allow_past_start: false      # 是否允许开始时间早于 today
+luanzuan_per_yuan: 100       # 预留：金额换算（用不到可删）

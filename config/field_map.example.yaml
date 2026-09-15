@@ -1,0 +1,51 @@
+# 字段映射 —— 让别人用自己的飞书表结构 / 自己的 CSV 表头
+# 左 = 引擎内部字段（不要改），右 = 你那边的实际字段名
+
+requirements:                # 需求表（输入）
+  name: 名称
+  type: 类型
+  requirement: 设计需求
+  value: 价值
+  output: 产出位置
+  qty: 数量
+  requester: 需求方
+
+members:                     # 成员表（人 / AI 混编）
+  name: 账号                 # 识别名，也可以是 agent 名
+  group: 设计组               # 能力组；规则表按此做候选链
+  status: 状态
+  available_from: 可安排时间
+  kind: 类型                 # human | ai  ← 人机分工的关键列
+  daily_capacity: 日容量      # 该执行者每天容量（小时）；留空 = 用全局 day_hours
+  model: 模型                # AI 专用：模型名，用于生成具名实例（如 gpt-5·首页banner）
+  concurrency: 并发数         # AI 专用：同时能跑几个实例（>1 时展开成多个调度槽）
+  cost_day: 日成本            # 按天计费单价（人：人天成本；AI：无单次成本时的折算基数）
+  cost_run: 单次成本          # 按次计费单价（AI：一次调用多少钱，与耗时无关）
+  active_value: 在职          # 「状态」里表示可派单的取值（英文表可填 active）
+
+workhours:                   # 工时规则表
+  type: 类型
+  value: 价值
+  hours: 工时
+  group: 设计组
+  priority: 优先级
+  cost: 成本                 # 可选：该类型任务的单次成本，优先级高于成员表单价
+
+tasks:                       # 飞书任务表（读写）
+  name: 名称
+  designer: 设计师            # 执行者关联列（人/AI 共用同一列）
+  start: 开始时间
+  end: 截止时间
+  status: 状态
+  project: 所属项目
+  parent: 父记录
+  project_type: 项目类型
+  output: 产出位置
+  value: 价值
+  requirement: 设计需求
+  done_value: 已完成        # 「状态」里表示已完成的取值（算占用时排除）
+
+projects:                    # 项目表
+  name: 项目名称
+  category: 项目分类        # 取代旧的「标题大写字母前缀」
+  done: 是否完成            # 筛选标签，取代「前缀表示已完成」
